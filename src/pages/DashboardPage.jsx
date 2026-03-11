@@ -1,6 +1,7 @@
 import React, {useEffect, useMemo, useState} from 'react';
 import {clearToken, request, uploadNewsImage} from '../api';
 import Sidebar from '../components/Sidebar';
+import RichTextEditor from '../components/RichTextEditor';
 
 const formatDate = value => {
   if (!value) {
@@ -15,6 +16,25 @@ const formatDate = value => {
   return date.toLocaleString();
 };
 
+const stripHtml = value => String(value || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+
+const getSnippet = value => {
+  const text = stripHtml(value);
+  if (!text) {
+    return '-';
+  }
+  return text.length > 120 ? `${text.slice(0, 117)}...` : text;
+};
+
+const emptyNewsForm = {
+  title: '',
+  content: '',
+  imageUrl: '',
+  thumbnailUrl: '',
+  tag: 'MYCRICKET',
+  isPublished: true,
+};
+
 const DashboardPage = ({token, onLogout}) => {
   const [activeTab, setActiveTab] = useState('overview');
   const [users, setUsers] = useState([]);
@@ -23,17 +43,14 @@ const DashboardPage = ({token, onLogout}) => {
   const [loadingNews, setLoadingNews] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [uploadingThumbnail, setUploadingThumbnail] = useState(false);
+  const [uploadingInlineImages, setUploadingInlineImages] = useState(false);
+  const [savingNews, setSavingNews] = useState(false);
+  const [deletingNewsId, setDeletingNewsId] = useState('');
+  const [editingNewsId, setEditingNewsId] = useState('');
+  const [isComposerOpen, setIsComposerOpen] = useState(false);
   const [error, setError] = useState('');
 
-  const [form, setForm] = useState({
-    title: '',
-    summary: '',
-    content: '',
-    imageUrl: '',
-    thumbnailUrl: '',
-    tag: 'MYCRICKET',
-    isPublished: true,
-  });
+  const [form, setForm] = useState(emptyNewsForm);
 
   const stats = useMemo(() => {
     const publishedCount = news.filter(item => item.isPublished).length;
@@ -114,33 +131,55 @@ const DashboardPage = ({token, onLogout}) => {
     }
   };
 
-  const createNews = async event => {
+  const saveNews = async event => {
     event.preventDefault();
     setError('');
 
     try {
-      await request('/api/admin/news', {
-        method: 'POST',
+      setSavingNews(true);
+      await request(editingNewsId ? `/api/admin/news/${editingNewsId}` : '/api/admin/news', {
+        method: editingNewsId ? 'PATCH' : 'POST',
         token,
         body: form,
       });
 
-      setForm({
-        title: '',
-        summary: '',
-        content: '',
-        imageUrl: '',
-        thumbnailUrl: '',
-        tag: 'MYCRICKET',
-        isPublished: true,
-      });
+      setForm(emptyNewsForm);
+      setEditingNewsId('');
+      setIsComposerOpen(false);
 
       await loadNews();
       setActiveTab('news');
     } catch (err) {
-      setError(err.message || 'Failed to create news');
+      setError(err.message || `Failed to ${editingNewsId ? 'update' : 'create'} news`);
       handleAuthError(err);
+    } finally {
+      setSavingNews(false);
     }
+  };
+
+  const startCreate = () => {
+    setEditingNewsId('');
+    setForm(emptyNewsForm);
+    setIsComposerOpen(true);
+  };
+
+  const startEdit = item => {
+    setEditingNewsId(item._id);
+    setForm({
+      title: item.title || '',
+      content: item.content || '',
+      imageUrl: item.imageUrl || '',
+      thumbnailUrl: item.thumbnailUrl || '',
+      tag: item.tag || 'MYCRICKET',
+      isPublished: Boolean(item.isPublished),
+    });
+    setIsComposerOpen(true);
+  };
+
+  const cancelComposer = () => {
+    setEditingNewsId('');
+    setForm(emptyNewsForm);
+    setIsComposerOpen(false);
   };
 
   const togglePublish = async item => {
@@ -154,6 +193,55 @@ const DashboardPage = ({token, onLogout}) => {
     } catch (err) {
       setError(err.message || 'Failed to update news');
       handleAuthError(err);
+    }
+  };
+
+  const deleteNews = async item => {
+    const shouldDelete = window.confirm(`Delete "${item.title}"? This cannot be undone.`);
+    if (!shouldDelete) {
+      return;
+    }
+
+    try {
+      setDeletingNewsId(item._id);
+      setError('');
+      await request(`/api/admin/news/${item._id}`, {method: 'DELETE', token});
+      if (editingNewsId === item._id) {
+        cancelComposer();
+      }
+      await loadNews();
+    } catch (err) {
+      setError(err.message || 'Failed to delete news');
+      handleAuthError(err);
+    } finally {
+      setDeletingNewsId('');
+    }
+  };
+
+  const handleInlineImagesUpload = async files => {
+    if (!files?.length) {
+      return;
+    }
+
+    try {
+      setUploadingInlineImages(true);
+      setError('');
+
+      const uploads = await Promise.all(files.map(file => uploadNewsImage({file, token})));
+      const imagesHtml = uploads
+        .map(file => file?.url)
+        .filter(Boolean)
+        .map(url => `<p><img src="${url}" alt="News image" /></p>`)
+        .join('');
+
+      if (imagesHtml) {
+        setForm(prev => ({...prev, content: `${prev.content || ''}${imagesHtml}`}));
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to upload content images');
+      handleAuthError(err);
+    } finally {
+      setUploadingInlineImages(false);
     }
   };
 
@@ -232,111 +320,146 @@ const DashboardPage = ({token, onLogout}) => {
         ) : null}
 
         {activeTab === 'news' ? (
-          <section className="news-layout">
-            <form className="panel stack" onSubmit={createNews}>
-              <h3>Create News</h3>
-              <label>
-                <span>Title</span>
-                <input
-                  value={form.title}
-                  onChange={e => setForm(prev => ({...prev, title: e.target.value}))}
-                  required
-                />
-              </label>
-              <label>
-                <span>Summary</span>
-                <textarea
-                  rows="3"
-                  value={form.summary}
-                  onChange={e => setForm(prev => ({...prev, summary: e.target.value}))}
-                  required
-                />
-              </label>
-              <label>
-                <span>Content</span>
-                <textarea
-                  rows="4"
-                  value={form.content}
-                  onChange={e => setForm(prev => ({...prev, content: e.target.value}))}
-                />
-              </label>
-              <label>
-                <span>News Image URL (R2)</span>
-                <input
-                  value={form.imageUrl}
-                  onChange={e => setForm(prev => ({...prev, imageUrl: e.target.value}))}
-                  placeholder="https://your-r2-public-domain/.../image.jpg"
-                />
-              </label>
-              <label>
-                <span>{uploadingImage ? 'Uploading image...' : 'Upload News Image (to R2)'}</span>
-                <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
-                  onChange={event => handleImageUpload(event, 'imageUrl')}
-                  disabled={uploadingImage || uploadingThumbnail}
-                />
-              </label>
-              <label>
-                <span>Thumbnail URL (R2)</span>
-                <input
-                  value={form.thumbnailUrl}
-                  onChange={e => setForm(prev => ({...prev, thumbnailUrl: e.target.value}))}
-                  placeholder="https://.../thumbnail.jpg"
-                />
-              </label>
-              <label>
-                <span>{uploadingThumbnail ? 'Uploading thumbnail...' : 'Upload Thumbnail (to R2)'}</span>
-                <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
-                  onChange={event => handleImageUpload(event, 'thumbnailUrl')}
-                  disabled={uploadingImage || uploadingThumbnail}
-                />
-              </label>
-              <label>
-                <span>Tag</span>
-                <input value={form.tag} onChange={e => setForm(prev => ({...prev, tag: e.target.value}))} />
-              </label>
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={form.isPublished}
-                  onChange={e => setForm(prev => ({...prev, isPublished: e.target.checked}))}
-                />
-                <span>Publish immediately</span>
-              </label>
-              <button type="submit" disabled={uploadingImage || uploadingThumbnail}>
-                {uploadingImage || uploadingThumbnail ? 'Upload in progress...' : 'Publish News'}
-              </button>
-            </form>
-
+          <section className="news-management">
             <article className="panel">
               <div className="panel-title-row">
-                <h3>News Library</h3>
-                {loadingNews ? <span className="muted">Loading...</span> : null}
+                <h3>News Listing</h3>
+                <div className="toolbar">
+                  <button type="button" onClick={startCreate}>
+                    + Create News
+                  </button>
+                </div>
               </div>
-              <div className="news-list">
-                {news.length ? (
-                  news.map(item => (
-                    <div key={item._id} className="news-item">
-                      <div>
-                        <p className="news-title">{item.title}</p>
-                        <p className="muted">{item.summary}</p>
-                        <p className="muted small">Image: {item.imageUrl || '-'}</p>
-                        <p className="muted small">Thumbnail: {item.thumbnailUrl || '-'}</p>
-                        <p className="muted small">Created {formatDate(item.createdAt)}</p>
-                      </div>
-                      <button type="button" className="ghost" onClick={() => togglePublish(item)}>
-                        {item.isPublished ? 'Unpublish' : 'Publish'}
-                      </button>
-                    </div>
-                  ))
-                ) : (
-                  <p className="muted">No news available.</p>
-                )}
+
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Title</th>
+                      <th>Preview</th>
+                      <th>Tag</th>
+                      <th>Status</th>
+                      <th>Updated</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {news.length ? (
+                      news.map(item => (
+                        <tr key={item._id}>
+                          <td>{item.title}</td>
+                          <td>{getSnippet(item.content || item.summary)}</td>
+                          <td>{item.tag || '-'}</td>
+                          <td>{item.isPublished ? 'Published' : 'Draft'}</td>
+                          <td>{formatDate(item.updatedAt || item.createdAt)}</td>
+                          <td>
+                            <div className="actionGroup">
+                              <button type="button" className="ghost" onClick={() => startEdit(item)}>
+                                Edit
+                              </button>
+                              <button type="button" className="ghost" onClick={() => togglePublish(item)}>
+                                {item.isPublished ? 'Unpublish' : 'Publish'}
+                              </button>
+                              <button
+                                type="button"
+                                className="ghost dangerBtn"
+                                onClick={() => deleteNews(item)}
+                                disabled={deletingNewsId === item._id}>
+                                {deletingNewsId === item._id ? 'Deleting...' : 'Delete'}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan="6">No news available.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
+              {loadingNews ? <p className="muted small">Loading news...</p> : null}
             </article>
+
+            {isComposerOpen ? (
+              <form className="panel stack" onSubmit={saveNews}>
+                <div className="panel-title-row">
+                  <h3>{editingNewsId ? 'Edit News' : 'Create News'}</h3>
+                  <button type="button" className="ghost" onClick={cancelComposer}>
+                    Cancel
+                  </button>
+                </div>
+
+                <label>
+                  <span>Title</span>
+                  <input value={form.title} onChange={e => setForm(prev => ({...prev, title: e.target.value}))} required />
+                </label>
+
+                <label>
+                  <span>Content</span>
+                  <RichTextEditor
+                    value={form.content}
+                    onChange={value => setForm(prev => ({...prev, content: value}))}
+                    onUploadImages={handleInlineImagesUpload}
+                    uploadingImages={uploadingInlineImages}
+                    disabled={savingNews}
+                  />
+                </label>
+
+                <label>
+                  <span>News Image URL (R2)</span>
+                  <input
+                    value={form.imageUrl}
+                    onChange={e => setForm(prev => ({...prev, imageUrl: e.target.value}))}
+                    placeholder="https://your-r2-public-domain/.../image.jpg"
+                  />
+                </label>
+                <label>
+                  <span>{uploadingImage ? 'Uploading image...' : 'Upload News Image (to R2)'}</span>
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+                    onChange={event => handleImageUpload(event, 'imageUrl')}
+                    disabled={uploadingImage || uploadingThumbnail || savingNews}
+                  />
+                </label>
+                <label>
+                  <span>Thumbnail URL (R2)</span>
+                  <input
+                    value={form.thumbnailUrl}
+                    onChange={e => setForm(prev => ({...prev, thumbnailUrl: e.target.value}))}
+                    placeholder="https://.../thumbnail.jpg"
+                  />
+                </label>
+                <label>
+                  <span>{uploadingThumbnail ? 'Uploading thumbnail...' : 'Upload Thumbnail (to R2)'}</span>
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+                    onChange={event => handleImageUpload(event, 'thumbnailUrl')}
+                    disabled={uploadingImage || uploadingThumbnail || savingNews}
+                  />
+                </label>
+                <label>
+                  <span>Tag</span>
+                  <input value={form.tag} onChange={e => setForm(prev => ({...prev, tag: e.target.value}))} />
+                </label>
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={form.isPublished}
+                    onChange={e => setForm(prev => ({...prev, isPublished: e.target.checked}))}
+                  />
+                  <span>Publish immediately</span>
+                </label>
+                <button
+                  type="submit"
+                  disabled={uploadingImage || uploadingThumbnail || uploadingInlineImages || savingNews}>
+                  {savingNews ? 'Saving...' : editingNewsId ? 'Update News' : 'Publish News'}
+                </button>
+              </form>
+            ) : null}
           </section>
         ) : null}
       </main>
