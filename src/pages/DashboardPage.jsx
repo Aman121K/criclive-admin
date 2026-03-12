@@ -1,6 +1,7 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {clearToken, request} from '../api';
 import ConfirmModal from '../components/ConfirmModal';
+import CkEditorCdn from '../components/CkEditorCdn';
 import Sidebar from '../components/Sidebar';
 import ToastStack from '../components/ToastStack';
 
@@ -487,12 +488,10 @@ const DashboardPage = ({token, onLogout}) => {
 
               <label>
                 <span>Summary</span>
-                <textarea
-                  rows={4}
+                <CkEditorCdn
                   value={form.summary}
-                  onChange={e => setForm(prev => ({...prev, summary: e.target.value}))}
-                  placeholder="Short summary for listing and series card"
-                  required
+                  onChange={value => setForm(prev => ({...prev, summary: value}))}
+                  disabled={savingNews}
                 />
               </label>
 

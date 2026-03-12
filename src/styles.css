@@ -352,6 +352,20 @@ th {
   color: var(--danger-text);
 }
 
+.ckEditorWrap {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 8px;
+  background: #ffffff;
+}
+
+.ckEditorWrap textarea {
+  min-height: 280px;
+  width: 100%;
+  border: 0;
+  resize: vertical;
+}
+
 .toastStack {
   position: fixed;
   top: 16px;
