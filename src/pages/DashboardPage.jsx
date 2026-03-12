@@ -30,6 +30,7 @@ const emptyNewsForm = {
   title: '',
   summary: '',
   series: '',
+  authorSource: '',
   tag: 'MYCRICKET',
   isPublished: true,
   thumbnailUrl: '',
@@ -173,6 +174,7 @@ const DashboardPage = ({token, onLogout}) => {
       payload.append('title', normalizedTitle);
       payload.append('summary', normalizedSummary);
       payload.append('series', normalizedSeries);
+      payload.append('authorSource', String(form.authorSource || '').trim());
       payload.append('tag', String(form.tag || 'MYCRICKET').trim() || 'MYCRICKET');
       payload.append('isPublished', String(Boolean(form.isPublished)));
 
@@ -212,6 +214,7 @@ const DashboardPage = ({token, onLogout}) => {
       title: item.title || '',
       summary: item.summary || '',
       series: item.series || '',
+      authorSource: item.authorSource || '',
       tag: item.tag || 'MYCRICKET',
       isPublished: Boolean(item.isPublished),
       thumbnailUrl: item.thumbnailUrl || '',
@@ -404,6 +407,7 @@ const DashboardPage = ({token, onLogout}) => {
                       <th>Title</th>
                       <th>Summary</th>
                       <th>Series</th>
+                      <th>Author/Source</th>
                       <th>Tag</th>
                       <th>Status</th>
                       <th>Updated</th>
@@ -424,6 +428,7 @@ const DashboardPage = ({token, onLogout}) => {
                           <td>{item.title}</td>
                           <td>{getSnippet(item.summary)}</td>
                           <td>{item.series || 'General'}</td>
+                          <td>{item.authorSource || '-'}</td>
                           <td>{item.tag || '-'}</td>
                           <td>
                             <span className={`statusPill ${item.isPublished ? 'published' : 'draft'}`}>
@@ -460,7 +465,7 @@ const DashboardPage = ({token, onLogout}) => {
                       ))
                     ) : (
                       <tr>
-                        <td colSpan="8">No news available.</td>
+                        <td colSpan="9">No news available.</td>
                       </tr>
                     )}
                   </tbody>
@@ -509,6 +514,15 @@ const DashboardPage = ({token, onLogout}) => {
                     <option key={option} value={option} />
                   ))}
                 </datalist>
+              </label>
+
+              <label>
+                <span>Author/Source</span>
+                <input
+                  value={form.authorSource}
+                  onChange={e => setForm(prev => ({...prev, authorSource: e.target.value}))}
+                  placeholder="e.g. ESPNcricinfo, Reuters, Desk"
+                />
               </label>
 
               <label>
