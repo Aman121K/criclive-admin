@@ -41,13 +41,13 @@ const DashboardPage = ({token, onLogout}) => {
   const [news, setNews] = useState([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [loadingNews, setLoadingNews] = useState(false);
-  const [uploadingImage, setUploadingImage] = useState(false);
-  const [uploadingThumbnail, setUploadingThumbnail] = useState(false);
   const [uploadingInlineImages, setUploadingInlineImages] = useState(false);
   const [savingNews, setSavingNews] = useState(false);
   const [deletingNewsId, setDeletingNewsId] = useState('');
   const [editingNewsId, setEditingNewsId] = useState('');
   const [error, setError] = useState('');
+  const [imageFile, setImageFile] = useState(null);
+  const [thumbnailFile, setThumbnailFile] = useState(null);
 
   const [form, setForm] = useState(emptyNewsForm);
 
@@ -100,50 +100,50 @@ const DashboardPage = ({token, onLogout}) => {
     loadNews();
   }, []);
 
-  const handleImageUpload = async (event, field) => {
-    const file = event.target.files?.[0];
-    if (!file) {
-      return;
-    }
-
-    setError('');
-
-    try {
-      if (field === 'imageUrl') {
-        setUploadingImage(true);
-      } else {
-        setUploadingThumbnail(true);
-      }
-
-      const data = await uploadNewsImage({file, token});
-      setForm(prev => ({...prev, [field]: data.url || ''}));
-    } catch (err) {
-      setError(err.message || 'Failed to upload image');
-      handleAuthError(err);
-    } finally {
-      if (field === 'imageUrl') {
-        setUploadingImage(false);
-      } else {
-        setUploadingThumbnail(false);
-      }
-      event.target.value = '';
-    }
-  };
-
   const saveNews = async event => {
     event.preventDefault();
     setError('');
 
     try {
+      const hasExistingImage = Boolean(form.imageUrl);
+      const hasExistingThumbnail = Boolean(form.thumbnailUrl);
+      const hasImage = Boolean(imageFile || hasExistingImage);
+      const hasThumbnail = Boolean(thumbnailFile || hasExistingThumbnail);
+
+      if (!hasImage || !hasThumbnail) {
+        setError('Please upload both news image and thumbnail image');
+        return;
+      }
+
       setSavingNews(true);
+      const payload = new FormData();
+      payload.append('title', form.title || '');
+      payload.append('content', form.content || '');
+      payload.append('tag', form.tag || 'MYCRICKET');
+      payload.append('isPublished', String(Boolean(form.isPublished)));
+      if (form.imageUrl) {
+        payload.append('imageUrl', form.imageUrl);
+      }
+      if (form.thumbnailUrl) {
+        payload.append('thumbnailUrl', form.thumbnailUrl);
+      }
+      if (imageFile) {
+        payload.append('image', imageFile);
+      }
+      if (thumbnailFile) {
+        payload.append('thumbnail', thumbnailFile);
+      }
+
       await request(editingNewsId ? `/api/admin/news/${editingNewsId}` : '/api/admin/news', {
         method: editingNewsId ? 'PATCH' : 'POST',
         token,
-        body: form,
+        body: payload,
       });
 
       setForm(emptyNewsForm);
       setEditingNewsId('');
+      setImageFile(null);
+      setThumbnailFile(null);
 
       await loadNews();
       setActiveTab('news-list');
@@ -158,6 +158,8 @@ const DashboardPage = ({token, onLogout}) => {
   const startCreate = () => {
     setEditingNewsId('');
     setForm(emptyNewsForm);
+    setImageFile(null);
+    setThumbnailFile(null);
     setActiveTab('news-create');
   };
 
@@ -171,12 +173,16 @@ const DashboardPage = ({token, onLogout}) => {
       tag: item.tag || 'MYCRICKET',
       isPublished: Boolean(item.isPublished),
     });
+    setImageFile(null);
+    setThumbnailFile(null);
     setActiveTab('news-create');
   };
 
   const cancelCreatePage = () => {
     setEditingNewsId('');
     setForm(emptyNewsForm);
+    setImageFile(null);
+    setThumbnailFile(null);
     setActiveTab('news-list');
   };
 
@@ -439,38 +445,28 @@ const DashboardPage = ({token, onLogout}) => {
               </label>
 
               <label>
-                <span>News Image URL (R2)</span>
-                <input
-                  value={form.imageUrl}
-                  onChange={e => setForm(prev => ({...prev, imageUrl: e.target.value}))}
-                  placeholder="https://your-r2-public-domain/.../image.jpg"
-                />
-              </label>
-              <label>
-                <span>{uploadingImage ? 'Uploading image...' : 'Upload News Image (to R2)'}</span>
+                <span>
+                  Upload News Image {form.imageUrl && !imageFile ? '(current image saved)' : ''}
+                </span>
                 <input
                   type="file"
                   accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
-                  onChange={event => handleImageUpload(event, 'imageUrl')}
-                  disabled={uploadingImage || uploadingThumbnail || savingNews}
+                  onChange={event => setImageFile(event.target.files?.[0] || null)}
+                  disabled={uploadingInlineImages || savingNews}
                 />
+                {imageFile ? <small className="muted">Selected: {imageFile.name}</small> : null}
               </label>
               <label>
-                <span>Thumbnail URL (R2)</span>
-                <input
-                  value={form.thumbnailUrl}
-                  onChange={e => setForm(prev => ({...prev, thumbnailUrl: e.target.value}))}
-                  placeholder="https://.../thumbnail.jpg"
-                />
-              </label>
-              <label>
-                <span>{uploadingThumbnail ? 'Uploading thumbnail...' : 'Upload Thumbnail (to R2)'}</span>
+                <span>
+                  Upload Thumbnail Image {form.thumbnailUrl && !thumbnailFile ? '(current thumbnail saved)' : ''}
+                </span>
                 <input
                   type="file"
                   accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
-                  onChange={event => handleImageUpload(event, 'thumbnailUrl')}
-                  disabled={uploadingImage || uploadingThumbnail || savingNews}
+                  onChange={event => setThumbnailFile(event.target.files?.[0] || null)}
+                  disabled={uploadingInlineImages || savingNews}
                 />
+                {thumbnailFile ? <small className="muted">Selected: {thumbnailFile.name}</small> : null}
               </label>
               <label>
                 <span>Tag</span>
@@ -484,7 +480,7 @@ const DashboardPage = ({token, onLogout}) => {
                 />
                 <span>Publish immediately</span>
               </label>
-              <button type="submit" disabled={uploadingImage || uploadingThumbnail || uploadingInlineImages || savingNews}>
+              <button type="submit" disabled={uploadingInlineImages || savingNews}>
                 {savingNews ? 'Saving...' : editingNewsId ? 'Update News' : 'Publish News'}
               </button>
             </form>

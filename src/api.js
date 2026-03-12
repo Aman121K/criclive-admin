@@ -22,13 +22,14 @@ export const clearToken = () => {
 };
 
 export const request = async (path, {method = 'GET', token = '', body} = {}) => {
+  const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
   const response = await fetch(`${getBaseUrl()}${path}`, {
     method,
     headers: {
-      'Content-Type': 'application/json',
+      ...(isFormData ? {} : {'Content-Type': 'application/json'}),
       ...(token ? {Authorization: `Bearer ${token}`} : {}),
     },
-    body: body ? JSON.stringify(body) : undefined,
+    body: body ? (isFormData ? body : JSON.stringify(body)) : undefined,
   });
 
   const payload = await response.json().catch(() => ({}));

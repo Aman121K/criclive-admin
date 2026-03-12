@@ -1,28 +1,60 @@
 import React, {useEffect, useRef, useState} from 'react';
 
-const CKEDITOR_CDN = 'https://cdn.ckeditor.com/4.22.1/full/ckeditor.js';
+const CKEDITOR_CDNS = [
+  'https://cdn.ckeditor.com/4.22.1/full/ckeditor.js',
+  'https://cdn.jsdelivr.net/npm/ckeditor4@4.22.1/ckeditor.js',
+];
 
-const loadCkEditorScript = () =>
+const loadScript = src =>
   new Promise((resolve, reject) => {
     if (window.CKEDITOR) {
       resolve(window.CKEDITOR);
       return;
     }
 
-    const existing = document.querySelector(`script[src="${CKEDITOR_CDN}"]`);
+    const existing = document.querySelector(`script[src="${src}"]`);
     if (existing) {
-      existing.addEventListener('load', () => resolve(window.CKEDITOR), {once: true});
-      existing.addEventListener('error', () => reject(new Error('Failed to load CKEditor')), {once: true});
+      if (existing.dataset.loaded === 'true' && window.CKEDITOR) {
+        resolve(window.CKEDITOR);
+        return;
+      }
+      existing.addEventListener(
+        'load',
+        () => {
+          existing.dataset.loaded = 'true';
+          resolve(window.CKEDITOR);
+        },
+        {once: true}
+      );
+      existing.addEventListener('error', () => reject(new Error(`Failed to load CKEditor from ${src}`)), {once: true});
       return;
     }
 
     const script = document.createElement('script');
-    script.src = CKEDITOR_CDN;
+    script.src = src;
     script.async = true;
-    script.onload = () => resolve(window.CKEDITOR);
-    script.onerror = () => reject(new Error('Failed to load CKEditor'));
+    script.onload = () => {
+      script.dataset.loaded = 'true';
+      resolve(window.CKEDITOR);
+    };
+    script.onerror = () => reject(new Error(`Failed to load CKEditor from ${src}`));
     document.body.appendChild(script);
   });
+
+const loadCkEditorScript = async () => {
+  for (const src of CKEDITOR_CDNS) {
+    try {
+      const CKEDITOR = await loadScript(src);
+      if (CKEDITOR) {
+        return CKEDITOR;
+      }
+    } catch (error) {
+      // Try next CDN URL.
+    }
+  }
+
+  throw new Error('Failed to load CKEditor from all CDN sources');
+};
 
 const CkEditorCdn = ({value, onChange, disabled = false}) => {
   const textareaRef = useRef(null);
@@ -95,7 +127,18 @@ const CkEditorCdn = ({value, onChange, disabled = false}) => {
   }, [disabled]);
 
   if (failed) {
-    return <p className="error">Failed to load CKEditor from CDN. Check internet and reload.</p>;
+    return (
+      <div className="stack">
+        <p className="error">Rich editor unavailable. Falling back to plain text editor.</p>
+        <textarea
+          value={value || ''}
+          onChange={event => onChange(event.target.value)}
+          disabled={disabled}
+          rows={14}
+          placeholder="Write news content here..."
+        />
+      </div>
+    );
   }
 
   return (
