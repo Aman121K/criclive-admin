@@ -3,7 +3,8 @@ import React from 'react';
 const tabs = [
   {id: 'overview', label: 'Overview'},
   {id: 'users', label: 'Users'},
-  {id: 'news', label: 'News'},
+  {id: 'news-list', label: 'News Listing'},
+  {id: 'news-create', label: 'Create News'},
 ];
 
 const Sidebar = ({activeTab, onTabChange, onLogout}) => {

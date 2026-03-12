@@ -1,7 +1,7 @@
 import React, {useEffect, useMemo, useState} from 'react';
 import {clearToken, request, uploadNewsImage} from '../api';
 import Sidebar from '../components/Sidebar';
-import RichTextEditor from '../components/RichTextEditor';
+import CkEditorCdn from '../components/CkEditorCdn';
 
 const formatDate = value => {
   if (!value) {
@@ -47,7 +47,6 @@ const DashboardPage = ({token, onLogout}) => {
   const [savingNews, setSavingNews] = useState(false);
   const [deletingNewsId, setDeletingNewsId] = useState('');
   const [editingNewsId, setEditingNewsId] = useState('');
-  const [isComposerOpen, setIsComposerOpen] = useState(false);
   const [error, setError] = useState('');
 
   const [form, setForm] = useState(emptyNewsForm);
@@ -145,10 +144,9 @@ const DashboardPage = ({token, onLogout}) => {
 
       setForm(emptyNewsForm);
       setEditingNewsId('');
-      setIsComposerOpen(false);
 
       await loadNews();
-      setActiveTab('news');
+      setActiveTab('news-list');
     } catch (err) {
       setError(err.message || `Failed to ${editingNewsId ? 'update' : 'create'} news`);
       handleAuthError(err);
@@ -160,7 +158,7 @@ const DashboardPage = ({token, onLogout}) => {
   const startCreate = () => {
     setEditingNewsId('');
     setForm(emptyNewsForm);
-    setIsComposerOpen(true);
+    setActiveTab('news-create');
   };
 
   const startEdit = item => {
@@ -173,13 +171,13 @@ const DashboardPage = ({token, onLogout}) => {
       tag: item.tag || 'MYCRICKET',
       isPublished: Boolean(item.isPublished),
     });
-    setIsComposerOpen(true);
+    setActiveTab('news-create');
   };
 
-  const cancelComposer = () => {
+  const cancelCreatePage = () => {
     setEditingNewsId('');
     setForm(emptyNewsForm);
-    setIsComposerOpen(false);
+    setActiveTab('news-list');
   };
 
   const togglePublish = async item => {
@@ -207,7 +205,7 @@ const DashboardPage = ({token, onLogout}) => {
       setError('');
       await request(`/api/admin/news/${item._id}`, {method: 'DELETE', token});
       if (editingNewsId === item._id) {
-        cancelComposer();
+        cancelCreatePage();
       }
       await loadNews();
     } catch (err) {
@@ -245,11 +243,23 @@ const DashboardPage = ({token, onLogout}) => {
     }
   };
 
+  const handleInlineImagesInput = async event => {
+    const files = Array.from(event.target.files || []);
+    await handleInlineImagesUpload(files);
+    event.target.value = '';
+  };
+
   return (
     <div className="admin-layout">
       <Sidebar
         activeTab={activeTab}
-        onTabChange={setActiveTab}
+        onTabChange={tabId => {
+          if (tabId === 'news-create' && activeTab !== 'news-create') {
+            setEditingNewsId('');
+            setForm(emptyNewsForm);
+          }
+          setActiveTab(tabId);
+        }}
         onLogout={() => {
           clearToken();
           onLogout();
@@ -258,7 +268,17 @@ const DashboardPage = ({token, onLogout}) => {
 
       <main className="content">
         <header className="content-header">
-          <h2>{activeTab === 'overview' ? 'Overview' : activeTab === 'users' ? 'Users' : 'News Management'}</h2>
+          <h2>
+            {activeTab === 'overview'
+              ? 'Overview'
+              : activeTab === 'users'
+                ? 'Users'
+                : activeTab === 'news-list'
+                  ? 'News Listing'
+                  : editingNewsId
+                    ? 'Edit News'
+                    : 'Create News'}
+          </h2>
           <div className="toolbar">
             <button type="button" className="ghost" onClick={loadUsers}>
               Refresh Users
@@ -319,7 +339,7 @@ const DashboardPage = ({token, onLogout}) => {
           </section>
         ) : null}
 
-        {activeTab === 'news' ? (
+        {activeTab === 'news-list' ? (
           <section className="news-management">
             <article className="panel">
               <div className="panel-title-row">
@@ -331,8 +351,8 @@ const DashboardPage = ({token, onLogout}) => {
                 </div>
               </div>
 
-              <div className="table-wrap">
-                <table>
+              <div className="table-wrap newsTableWrap">
+                <table className="newsTable">
                   <thead>
                     <tr>
                       <th>Title</th>
@@ -381,85 +401,93 @@ const DashboardPage = ({token, onLogout}) => {
               </div>
               {loadingNews ? <p className="muted small">Loading news...</p> : null}
             </article>
+          </section>
+        ) : null}
 
-            {isComposerOpen ? (
-              <form className="panel stack" onSubmit={saveNews}>
-                <div className="panel-title-row">
-                  <h3>{editingNewsId ? 'Edit News' : 'Create News'}</h3>
-                  <button type="button" className="ghost" onClick={cancelComposer}>
-                    Cancel
-                  </button>
-                </div>
-
-                <label>
-                  <span>Title</span>
-                  <input value={form.title} onChange={e => setForm(prev => ({...prev, title: e.target.value}))} required />
-                </label>
-
-                <label>
-                  <span>Content</span>
-                  <RichTextEditor
-                    value={form.content}
-                    onChange={value => setForm(prev => ({...prev, content: value}))}
-                    onUploadImages={handleInlineImagesUpload}
-                    uploadingImages={uploadingInlineImages}
-                    disabled={savingNews}
-                  />
-                </label>
-
-                <label>
-                  <span>News Image URL (R2)</span>
-                  <input
-                    value={form.imageUrl}
-                    onChange={e => setForm(prev => ({...prev, imageUrl: e.target.value}))}
-                    placeholder="https://your-r2-public-domain/.../image.jpg"
-                  />
-                </label>
-                <label>
-                  <span>{uploadingImage ? 'Uploading image...' : 'Upload News Image (to R2)'}</span>
-                  <input
-                    type="file"
-                    accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
-                    onChange={event => handleImageUpload(event, 'imageUrl')}
-                    disabled={uploadingImage || uploadingThumbnail || savingNews}
-                  />
-                </label>
-                <label>
-                  <span>Thumbnail URL (R2)</span>
-                  <input
-                    value={form.thumbnailUrl}
-                    onChange={e => setForm(prev => ({...prev, thumbnailUrl: e.target.value}))}
-                    placeholder="https://.../thumbnail.jpg"
-                  />
-                </label>
-                <label>
-                  <span>{uploadingThumbnail ? 'Uploading thumbnail...' : 'Upload Thumbnail (to R2)'}</span>
-                  <input
-                    type="file"
-                    accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
-                    onChange={event => handleImageUpload(event, 'thumbnailUrl')}
-                    disabled={uploadingImage || uploadingThumbnail || savingNews}
-                  />
-                </label>
-                <label>
-                  <span>Tag</span>
-                  <input value={form.tag} onChange={e => setForm(prev => ({...prev, tag: e.target.value}))} />
-                </label>
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    checked={form.isPublished}
-                    onChange={e => setForm(prev => ({...prev, isPublished: e.target.checked}))}
-                  />
-                  <span>Publish immediately</span>
-                </label>
-                <button
-                  type="submit"
-                  disabled={uploadingImage || uploadingThumbnail || uploadingInlineImages || savingNews}>
-                  {savingNews ? 'Saving...' : editingNewsId ? 'Update News' : 'Publish News'}
+        {activeTab === 'news-create' ? (
+          <section className="news-management">
+            <form className="panel stack" onSubmit={saveNews}>
+              <div className="panel-title-row">
+                <h3>{editingNewsId ? 'Edit News' : 'Create News'}</h3>
+                <button type="button" className="ghost" onClick={cancelCreatePage}>
+                  Back to Listing
                 </button>
-              </form>
-            ) : null}
+              </div>
+
+              <label>
+                <span>Title</span>
+                <input value={form.title} onChange={e => setForm(prev => ({...prev, title: e.target.value}))} required />
+              </label>
+
+              <label>
+                <span>Content (CKEditor)</span>
+                <CkEditorCdn
+                  value={form.content}
+                  onChange={value => setForm(prev => ({...prev, content: value}))}
+                  disabled={savingNews}
+                />
+              </label>
+              <label>
+                <span>{uploadingInlineImages ? 'Uploading content images...' : 'Upload Content Images (multiple)'}</span>
+                <input
+                  type="file"
+                  multiple
+                  accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+                  onChange={handleInlineImagesInput}
+                  disabled={uploadingInlineImages || savingNews}
+                />
+              </label>
+
+              <label>
+                <span>News Image URL (R2)</span>
+                <input
+                  value={form.imageUrl}
+                  onChange={e => setForm(prev => ({...prev, imageUrl: e.target.value}))}
+                  placeholder="https://your-r2-public-domain/.../image.jpg"
+                />
+              </label>
+              <label>
+                <span>{uploadingImage ? 'Uploading image...' : 'Upload News Image (to R2)'}</span>
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+                  onChange={event => handleImageUpload(event, 'imageUrl')}
+                  disabled={uploadingImage || uploadingThumbnail || savingNews}
+                />
+              </label>
+              <label>
+                <span>Thumbnail URL (R2)</span>
+                <input
+                  value={form.thumbnailUrl}
+                  onChange={e => setForm(prev => ({...prev, thumbnailUrl: e.target.value}))}
+                  placeholder="https://.../thumbnail.jpg"
+                />
+              </label>
+              <label>
+                <span>{uploadingThumbnail ? 'Uploading thumbnail...' : 'Upload Thumbnail (to R2)'}</span>
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+                  onChange={event => handleImageUpload(event, 'thumbnailUrl')}
+                  disabled={uploadingImage || uploadingThumbnail || savingNews}
+                />
+              </label>
+              <label>
+                <span>Tag</span>
+                <input value={form.tag} onChange={e => setForm(prev => ({...prev, tag: e.target.value}))} />
+              </label>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={form.isPublished}
+                  onChange={e => setForm(prev => ({...prev, isPublished: e.target.checked}))}
+                />
+                <span>Publish immediately</span>
+              </label>
+              <button type="submit" disabled={uploadingImage || uploadingThumbnail || uploadingInlineImages || savingNews}>
+                {savingNews ? 'Saving...' : editingNewsId ? 'Update News' : 'Publish News'}
+              </button>
+            </form>
           </section>
         ) : null}
       </main>
