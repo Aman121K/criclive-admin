@@ -1,7 +1,8 @@
-import React, {useEffect, useMemo, useState} from 'react';
-import {clearToken, request, uploadNewsImage} from '../api';
+import React, {useCallback, useEffect, useMemo, useState} from 'react';
+import {clearToken, request} from '../api';
+import ConfirmModal from '../components/ConfirmModal';
 import Sidebar from '../components/Sidebar';
-import CkEditorCdn from '../components/CkEditorCdn';
+import ToastStack from '../components/ToastStack';
 
 const formatDate = value => {
   if (!value) {
@@ -16,10 +17,8 @@ const formatDate = value => {
   return date.toLocaleString();
 };
 
-const stripHtml = value => String(value || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-
 const getSnippet = value => {
-  const text = stripHtml(value);
+  const text = String(value || '').trim();
   if (!text) {
     return '-';
   }
@@ -28,11 +27,11 @@ const getSnippet = value => {
 
 const emptyNewsForm = {
   title: '',
-  content: '',
-  imageUrl: '',
-  thumbnailUrl: '',
+  summary: '',
+  series: '',
   tag: 'MYCRICKET',
   isPublished: true,
+  thumbnailUrl: '',
 };
 
 const DashboardPage = ({token, onLogout}) => {
@@ -41,15 +40,26 @@ const DashboardPage = ({token, onLogout}) => {
   const [news, setNews] = useState([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [loadingNews, setLoadingNews] = useState(false);
-  const [uploadingInlineImages, setUploadingInlineImages] = useState(false);
   const [savingNews, setSavingNews] = useState(false);
+  const [publishingNewsId, setPublishingNewsId] = useState('');
   const [deletingNewsId, setDeletingNewsId] = useState('');
   const [editingNewsId, setEditingNewsId] = useState('');
-  const [error, setError] = useState('');
-  const [imageFile, setImageFile] = useState(null);
+
+  const [seriesOptions, setSeriesOptions] = useState([]);
   const [thumbnailFile, setThumbnailFile] = useState(null);
+  const [thumbnailPreview, setThumbnailPreview] = useState('');
+  const [confirmDeleteItem, setConfirmDeleteItem] = useState(null);
 
   const [form, setForm] = useState(emptyNewsForm);
+  const [toasts, setToasts] = useState([]);
+
+  const pushToast = (message, type = 'info') => {
+    setToasts(prev => [...prev, {id: `${Date.now()}-${Math.random()}`, message, type}]);
+  };
+
+  const removeToast = useCallback(id => {
+    setToasts(prev => prev.filter(toast => toast.id !== id));
+  }, []);
 
   const stats = useMemo(() => {
     const publishedCount = news.filter(item => item.isPublished).length;
@@ -60,75 +70,113 @@ const DashboardPage = ({token, onLogout}) => {
     ];
   }, [news, users.length]);
 
-  const handleAuthError = (err) => {
+  const handleAuthError = err => {
     if (String(err.message || '').toLowerCase().includes('unauthorized')) {
       clearToken();
       onLogout();
     }
   };
 
-  const loadUsers = async () => {
+  const loadUsers = async (silent = false) => {
     try {
       setLoadingUsers(true);
-      setError('');
       const data = await request('/api/admin/users', {token});
       setUsers(data.items || []);
+      if (!silent) {
+        pushToast('Users refreshed', 'success');
+      }
     } catch (err) {
-      setError(err.message || 'Failed to load users');
+      pushToast(err.message || 'Failed to load users', 'error');
       handleAuthError(err);
     } finally {
       setLoadingUsers(false);
     }
   };
 
-  const loadNews = async () => {
+  const loadNews = async (silent = false) => {
     try {
       setLoadingNews(true);
-      setError('');
       const data = await request('/api/admin/news', {token});
       setNews(data.items || []);
+      if (!silent) {
+        pushToast('News refreshed', 'success');
+      }
     } catch (err) {
-      setError(err.message || 'Failed to load news');
+      pushToast(err.message || 'Failed to load news', 'error');
       handleAuthError(err);
     } finally {
       setLoadingNews(false);
     }
   };
 
+  const loadSeriesOptions = async () => {
+    try {
+      const data = await request('/api/admin/news/series-options', {token});
+      setSeriesOptions(Array.isArray(data.items) ? data.items : []);
+    } catch {
+      setSeriesOptions([]);
+    }
+  };
+
   useEffect(() => {
-    loadUsers();
-    loadNews();
+    loadUsers(true);
+    loadNews(true);
+    loadSeriesOptions();
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (thumbnailPreview && thumbnailPreview.startsWith('blob:')) {
+        URL.revokeObjectURL(thumbnailPreview);
+      }
+    };
+  }, [thumbnailPreview]);
+
+  const resetForm = () => {
+    setEditingNewsId('');
+    setForm(emptyNewsForm);
+    setThumbnailFile(null);
+    setThumbnailPreview('');
+  };
 
   const saveNews = async event => {
     event.preventDefault();
-    setError('');
+
+    const normalizedTitle = String(form.title || '').trim();
+    const normalizedSummary = String(form.summary || '').trim();
+    const normalizedSeries = String(form.series || '').trim();
+
+    if (!normalizedTitle) {
+      pushToast('Title is required', 'error');
+      return;
+    }
+
+    if (!normalizedSummary) {
+      pushToast('Summary is required', 'error');
+      return;
+    }
+
+    if (!normalizedSeries) {
+      pushToast('Series is required', 'error');
+      return;
+    }
+
+    if (!thumbnailFile && !form.thumbnailUrl) {
+      pushToast('Thumbnail is required', 'error');
+      return;
+    }
 
     try {
-      const hasExistingImage = Boolean(form.imageUrl);
-      const hasExistingThumbnail = Boolean(form.thumbnailUrl);
-      const hasImage = Boolean(imageFile || hasExistingImage);
-      const hasThumbnail = Boolean(thumbnailFile || hasExistingThumbnail);
-
-      if (!hasImage || !hasThumbnail) {
-        setError('Please upload both news image and thumbnail image');
-        return;
-      }
-
       setSavingNews(true);
       const payload = new FormData();
-      payload.append('title', form.title || '');
-      payload.append('content', form.content || '');
-      payload.append('tag', form.tag || 'MYCRICKET');
+      payload.append('title', normalizedTitle);
+      payload.append('summary', normalizedSummary);
+      payload.append('series', normalizedSeries);
+      payload.append('tag', String(form.tag || 'MYCRICKET').trim() || 'MYCRICKET');
       payload.append('isPublished', String(Boolean(form.isPublished)));
-      if (form.imageUrl) {
-        payload.append('imageUrl', form.imageUrl);
-      }
+
       if (form.thumbnailUrl) {
         payload.append('thumbnailUrl', form.thumbnailUrl);
-      }
-      if (imageFile) {
-        payload.append('image', imageFile);
       }
       if (thumbnailFile) {
         payload.append('thumbnail', thumbnailFile);
@@ -140,15 +188,12 @@ const DashboardPage = ({token, onLogout}) => {
         body: payload,
       });
 
-      setForm(emptyNewsForm);
-      setEditingNewsId('');
-      setImageFile(null);
-      setThumbnailFile(null);
-
-      await loadNews();
+      pushToast(editingNewsId ? 'News updated successfully' : 'News published successfully', 'success');
+      resetForm();
+      await Promise.all([loadNews(true), loadSeriesOptions()]);
       setActiveTab('news-list');
     } catch (err) {
-      setError(err.message || `Failed to ${editingNewsId ? 'update' : 'create'} news`);
+      pushToast(err.message || `Failed to ${editingNewsId ? 'update' : 'create'} news`, 'error');
       handleAuthError(err);
     } finally {
       setSavingNews(false);
@@ -156,10 +201,7 @@ const DashboardPage = ({token, onLogout}) => {
   };
 
   const startCreate = () => {
-    setEditingNewsId('');
-    setForm(emptyNewsForm);
-    setImageFile(null);
-    setThumbnailFile(null);
+    resetForm();
     setActiveTab('news-create');
   };
 
@@ -167,102 +209,97 @@ const DashboardPage = ({token, onLogout}) => {
     setEditingNewsId(item._id);
     setForm({
       title: item.title || '',
-      content: item.content || '',
-      imageUrl: item.imageUrl || '',
-      thumbnailUrl: item.thumbnailUrl || '',
+      summary: item.summary || '',
+      series: item.series || '',
       tag: item.tag || 'MYCRICKET',
       isPublished: Boolean(item.isPublished),
+      thumbnailUrl: item.thumbnailUrl || '',
     });
-    setImageFile(null);
     setThumbnailFile(null);
+    setThumbnailPreview(item.thumbnailUrl || '');
     setActiveTab('news-create');
   };
 
   const cancelCreatePage = () => {
-    setEditingNewsId('');
-    setForm(emptyNewsForm);
-    setImageFile(null);
-    setThumbnailFile(null);
+    resetForm();
     setActiveTab('news-list');
   };
 
   const togglePublish = async item => {
     try {
+      setPublishingNewsId(item._id);
       await request(`/api/admin/news/${item._id}/publish`, {
         method: 'PATCH',
         token,
         body: {isPublished: !item.isPublished},
       });
-      await loadNews();
+      await loadNews(true);
+      pushToast(item.isPublished ? 'News moved to draft' : 'News published', 'success');
     } catch (err) {
-      setError(err.message || 'Failed to update news');
+      pushToast(err.message || 'Failed to update news', 'error');
       handleAuthError(err);
+    } finally {
+      setPublishingNewsId('');
     }
   };
 
-  const deleteNews = async item => {
-    const shouldDelete = window.confirm(`Delete "${item.title}"? This cannot be undone.`);
-    if (!shouldDelete) {
+  const askDeleteNews = item => {
+    setConfirmDeleteItem(item);
+  };
+
+  const confirmDeleteNews = async () => {
+    if (!confirmDeleteItem?._id) {
       return;
     }
 
     try {
-      setDeletingNewsId(item._id);
-      setError('');
-      await request(`/api/admin/news/${item._id}`, {method: 'DELETE', token});
-      if (editingNewsId === item._id) {
+      setDeletingNewsId(confirmDeleteItem._id);
+      await request(`/api/admin/news/${confirmDeleteItem._id}`, {method: 'DELETE', token});
+      pushToast('News deleted successfully', 'success');
+      if (editingNewsId === confirmDeleteItem._id) {
         cancelCreatePage();
       }
-      await loadNews();
+      setConfirmDeleteItem(null);
+      await Promise.all([loadNews(true), loadSeriesOptions()]);
     } catch (err) {
-      setError(err.message || 'Failed to delete news');
+      pushToast(err.message || 'Failed to delete news', 'error');
       handleAuthError(err);
     } finally {
       setDeletingNewsId('');
     }
   };
 
-  const handleInlineImagesUpload = async files => {
-    if (!files?.length) {
+  const onThumbnailChange = event => {
+    const file = event.target.files?.[0] || null;
+    setThumbnailFile(file);
+
+    if (!file) {
+      setThumbnailPreview(form.thumbnailUrl || '');
       return;
     }
 
-    try {
-      setUploadingInlineImages(true);
-      setError('');
-
-      const uploads = await Promise.all(files.map(file => uploadNewsImage({file, token})));
-      const imagesHtml = uploads
-        .map(file => file?.url)
-        .filter(Boolean)
-        .map(url => `<p><img src="${url}" alt="News image" /></p>`)
-        .join('');
-
-      if (imagesHtml) {
-        setForm(prev => ({...prev, content: `${prev.content || ''}${imagesHtml}`}));
-      }
-    } catch (err) {
-      setError(err.message || 'Failed to upload content images');
-      handleAuthError(err);
-    } finally {
-      setUploadingInlineImages(false);
-    }
-  };
-
-  const handleInlineImagesInput = async event => {
-    const files = Array.from(event.target.files || []);
-    await handleInlineImagesUpload(files);
-    event.target.value = '';
+    const previewUrl = URL.createObjectURL(file);
+    setThumbnailPreview(previewUrl);
   };
 
   return (
     <div className="admin-layout">
+      <ToastStack toasts={toasts} onRemove={removeToast} />
+      <ConfirmModal
+        open={Boolean(confirmDeleteItem)}
+        title="Delete News"
+        message={confirmDeleteItem ? `Delete \"${confirmDeleteItem.title}\"? This action cannot be undone.` : ''}
+        confirmText="Delete"
+        loading={Boolean(deletingNewsId)}
+        onConfirm={confirmDeleteNews}
+        onCancel={() => setConfirmDeleteItem(null)}
+      />
+
       <Sidebar
         activeTab={activeTab}
         onTabChange={tabId => {
           if (tabId === 'news-create' && activeTab !== 'news-create') {
-            setEditingNewsId('');
-            setForm(emptyNewsForm);
+            resetForm();
           }
           setActiveTab(tabId);
         }}
@@ -274,28 +311,29 @@ const DashboardPage = ({token, onLogout}) => {
 
       <main className="content">
         <header className="content-header">
-          <h2>
-            {activeTab === 'overview'
-              ? 'Overview'
-              : activeTab === 'users'
-                ? 'Users'
-                : activeTab === 'news-list'
-                  ? 'News Listing'
-                  : editingNewsId
-                    ? 'Edit News'
-                    : 'Create News'}
-          </h2>
+          <div>
+            <p className="eyebrow">Control Center</p>
+            <h2>
+              {activeTab === 'overview'
+                ? 'Overview'
+                : activeTab === 'users'
+                  ? 'Users'
+                  : activeTab === 'news-list'
+                    ? 'News Listing'
+                    : editingNewsId
+                      ? 'Edit News'
+                      : 'Create News'}
+            </h2>
+          </div>
           <div className="toolbar">
-            <button type="button" className="ghost" onClick={loadUsers}>
-              Refresh Users
+            <button type="button" className="ghost" onClick={() => loadUsers(false)} disabled={loadingUsers}>
+              {loadingUsers ? 'Refreshing Users...' : 'Refresh Users'}
             </button>
-            <button type="button" className="ghost" onClick={loadNews}>
-              Refresh News
+            <button type="button" className="ghost" onClick={() => loadNews(false)} disabled={loadingNews}>
+              {loadingNews ? 'Refreshing News...' : 'Refresh News'}
             </button>
           </div>
         </header>
-
-        {error ? <p className="error">{error}</p> : null}
 
         {activeTab === 'overview' ? (
           <section className="stats-grid">
@@ -361,8 +399,10 @@ const DashboardPage = ({token, onLogout}) => {
                 <table className="newsTable">
                   <thead>
                     <tr>
+                      <th>Thumbnail</th>
                       <th>Title</th>
-                      <th>Preview</th>
+                      <th>Summary</th>
+                      <th>Series</th>
                       <th>Tag</th>
                       <th>Status</th>
                       <th>Updated</th>
@@ -373,24 +413,44 @@ const DashboardPage = ({token, onLogout}) => {
                     {news.length ? (
                       news.map(item => (
                         <tr key={item._id}>
+                          <td>
+                            {item.thumbnailUrl ? (
+                              <img src={item.thumbnailUrl} alt={item.title} className="newsThumbMini" />
+                            ) : (
+                              <span className="muted">-</span>
+                            )}
+                          </td>
                           <td>{item.title}</td>
-                          <td>{getSnippet(item.content || item.summary)}</td>
+                          <td>{getSnippet(item.summary)}</td>
+                          <td>{item.series || 'General'}</td>
                           <td>{item.tag || '-'}</td>
-                          <td>{item.isPublished ? 'Published' : 'Draft'}</td>
+                          <td>
+                            <span className={`statusPill ${item.isPublished ? 'published' : 'draft'}`}>
+                              {item.isPublished ? 'Published' : 'Draft'}
+                            </span>
+                          </td>
                           <td>{formatDate(item.updatedAt || item.createdAt)}</td>
                           <td>
                             <div className="actionGroup">
                               <button type="button" className="ghost" onClick={() => startEdit(item)}>
                                 Edit
                               </button>
-                              <button type="button" className="ghost" onClick={() => togglePublish(item)}>
-                                {item.isPublished ? 'Unpublish' : 'Publish'}
+                              <button
+                                type="button"
+                                className="ghost"
+                                onClick={() => togglePublish(item)}
+                                disabled={publishingNewsId === item._id || Boolean(deletingNewsId)}>
+                                {publishingNewsId === item._id
+                                  ? 'Updating...'
+                                  : item.isPublished
+                                    ? 'Unpublish'
+                                    : 'Publish'}
                               </button>
                               <button
                                 type="button"
                                 className="ghost dangerBtn"
-                                onClick={() => deleteNews(item)}
-                                disabled={deletingNewsId === item._id}>
+                                onClick={() => askDeleteNews(item)}
+                                disabled={deletingNewsId === item._id || publishingNewsId === item._id}>
                                 {deletingNewsId === item._id ? 'Deleting...' : 'Delete'}
                               </button>
                             </div>
@@ -399,7 +459,7 @@ const DashboardPage = ({token, onLogout}) => {
                       ))
                     ) : (
                       <tr>
-                        <td colSpan="6">No news available.</td>
+                        <td colSpan="8">No news available.</td>
                       </tr>
                     )}
                   </tbody>
@@ -415,7 +475,7 @@ const DashboardPage = ({token, onLogout}) => {
             <form className="panel stack" onSubmit={saveNews}>
               <div className="panel-title-row">
                 <h3>{editingNewsId ? 'Edit News' : 'Create News'}</h3>
-                <button type="button" className="ghost" onClick={cancelCreatePage}>
+                <button type="button" className="ghost" onClick={cancelCreatePage} disabled={savingNews}>
                   Back to Listing
                 </button>
               </div>
@@ -426,52 +486,48 @@ const DashboardPage = ({token, onLogout}) => {
               </label>
 
               <label>
-                <span>Content (CKEditor)</span>
-                <CkEditorCdn
-                  value={form.content}
-                  onChange={value => setForm(prev => ({...prev, content: value}))}
-                  disabled={savingNews}
-                />
-              </label>
-              <label>
-                <span>{uploadingInlineImages ? 'Uploading content images...' : 'Upload Content Images (multiple)'}</span>
-                <input
-                  type="file"
-                  multiple
-                  accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
-                  onChange={handleInlineImagesInput}
-                  disabled={uploadingInlineImages || savingNews}
+                <span>Summary</span>
+                <textarea
+                  rows={4}
+                  value={form.summary}
+                  onChange={e => setForm(prev => ({...prev, summary: e.target.value}))}
+                  placeholder="Short summary for listing and series card"
+                  required
                 />
               </label>
 
               <label>
-                <span>
-                  Upload News Image {form.imageUrl && !imageFile ? '(current image saved)' : ''}
-                </span>
+                <span>Series</span>
                 <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
-                  onChange={event => setImageFile(event.target.files?.[0] || null)}
-                  disabled={uploadingInlineImages || savingNews}
+                  value={form.series}
+                  onChange={e => setForm(prev => ({...prev, series: e.target.value}))}
+                  list="series-options"
+                  placeholder="e.g. IPL 2026"
+                  required
                 />
-                {imageFile ? <small className="muted">Selected: {imageFile.name}</small> : null}
+                <datalist id="series-options">
+                  {seriesOptions.map(option => (
+                    <option key={option} value={option} />
+                  ))}
+                </datalist>
               </label>
-              <label>
-                <span>
-                  Upload Thumbnail Image {form.thumbnailUrl && !thumbnailFile ? '(current thumbnail saved)' : ''}
-                </span>
-                <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
-                  onChange={event => setThumbnailFile(event.target.files?.[0] || null)}
-                  disabled={uploadingInlineImages || savingNews}
-                />
-                {thumbnailFile ? <small className="muted">Selected: {thumbnailFile.name}</small> : null}
-              </label>
+
               <label>
                 <span>Tag</span>
                 <input value={form.tag} onChange={e => setForm(prev => ({...prev, tag: e.target.value}))} />
               </label>
+
+              <label>
+                <span>Thumbnail</span>
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+                  onChange={onThumbnailChange}
+                  disabled={savingNews}
+                />
+                {thumbnailPreview ? <img src={thumbnailPreview} alt="Thumbnail preview" className="thumbnailPreview" /> : null}
+              </label>
+
               <label className="check">
                 <input
                   type="checkbox"
@@ -480,7 +536,7 @@ const DashboardPage = ({token, onLogout}) => {
                 />
                 <span>Publish immediately</span>
               </label>
-              <button type="submit" disabled={uploadingInlineImages || savingNews}>
+              <button type="submit" disabled={savingNews}>
                 {savingNews ? 'Saving...' : editingNewsId ? 'Update News' : 'Publish News'}
               </button>
             </form>

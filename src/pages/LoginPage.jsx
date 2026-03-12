@@ -1,16 +1,24 @@
-import React, {useState} from 'react';
+import React, {useCallback, useState} from 'react';
 import {getBaseUrl, request, setBaseUrl, setToken} from '../api';
+import ToastStack from '../components/ToastStack';
 
 const LoginPage = ({onLoginSuccess}) => {
   const [email, setEmail] = useState('admin@mycricket.com');
   const [password, setPassword] = useState('Admin@123');
   const [baseUrl, setBaseUrlState] = useState(getBaseUrl());
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [toasts, setToasts] = useState([]);
+
+  const pushToast = (message, type = 'info') => {
+    setToasts(prev => [...prev, {id: `${Date.now()}-${Math.random()}`, message, type}]);
+  };
+
+  const removeToast = useCallback(id => {
+    setToasts(prev => prev.filter(toast => toast.id !== id));
+  }, []);
 
   const handleSubmit = async event => {
     event.preventDefault();
-    setError('');
 
     try {
       setLoading(true);
@@ -21,9 +29,10 @@ const LoginPage = ({onLoginSuccess}) => {
       });
 
       setToken(data.token);
+      pushToast('Login successful', 'success');
       onLoginSuccess(data.token);
     } catch (err) {
-      setError(err.message || 'Failed to login');
+      pushToast(err.message || 'Failed to login', 'error');
     } finally {
       setLoading(false);
     }
@@ -31,6 +40,7 @@ const LoginPage = ({onLoginSuccess}) => {
 
   return (
     <main className="login-page">
+      <ToastStack toasts={toasts} onRemove={removeToast} />
       <section className="login-card">
         <p className="eyebrow">Secure Access</p>
         <h2>Admin Login</h2>
@@ -52,7 +62,6 @@ const LoginPage = ({onLoginSuccess}) => {
           <button type="submit" disabled={loading}>
             {loading ? 'Signing in...' : 'Sign In'}
           </button>
-          {error ? <p className="error">{error}</p> : null}
         </form>
       </section>
     </main>
